@@ -242,6 +242,8 @@ val really_read_bigsubstring
   -> Bigsubstring.t
   -> [ `Ok | `Eof of int (** [0 <= i < Substring.length ss] *) ] Deferred.t
 
+type trace_f = {trace : 'a. string -> (unit -> 'a) -> 'a}
+
 (** [read_until t pred ~keep_delim] reads until it hits a delimiter [c] such that:
 
     - if [pred = `Char c'] then [c = c']
@@ -254,7 +256,8 @@ val really_read_bigsubstring
     [read_until] returns a freshly-allocated string consisting of all the characters read
     and optionally including the delimiter as per [keep_delim]. *)
 val read_until
-  :  t
+  :  ?trace:trace_f
+  -> t
   -> [ `Pred of char -> bool | `Char of char ]
   -> keep_delim:bool
   -> [ `Ok of string | `Eof_without_delim of string | `Eof ] Deferred.t
@@ -273,7 +276,7 @@ val read_until_max
     and returns a freshly-allocated string containing everything up to but not including
     the newline character.  If [read_line] encounters EOF before the newline char then
     everything read up to but not including EOF will be returned as a line. *)
-val read_line : t -> string Read_result.t Deferred.t
+val read_line : ?trace:trace_f -> t -> string Read_result.t Deferred.t
 
 
 (** [really_read_line ~wait_time t] reads up to and including the next newline ([\n])
@@ -349,7 +352,7 @@ val ltell : t -> int64 Deferred.t
     element.  The lines do not contain the trailing newline.  When the reader reaches EOF
     or the pipe is closed, [lines] closes the reader, and then after the reader close is
     finished, closes the pipe. *)
-val lines : t -> string Pipe.Reader.t
+val lines : ?trace:trace_f -> t -> string Pipe.Reader.t
 
 (** [contents t] returns the string corresponding to the full contents (up to EOF) of the
     reader.  [contents] closes [t] before returning the string.*)

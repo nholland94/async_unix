@@ -4,6 +4,8 @@ module Scheduler = Raw_scheduler
 module Unix = Unix_syscalls
 module Id = Unique_id.Int63 ()
 
+type trace_f = {trace : 'a. string -> (unit -> 'a) -> 'a}
+
 module Read_result = struct
   module Z = struct
     type 'a t =
@@ -670,9 +672,12 @@ module Internal = struct
       Ok (loop t.pos)
   ;;
 
-  let read_until_gen t p ~keep_delim ~max k =
+  let noop_trace : trace_f = {trace = fun _ f -> f ()}
+
+  let read_until_gen ?(trace = noop_trace) t p ~keep_delim ~max k =
     let rec loop ac total =
-      with_nonempty_buffer' t (function
+      with_nonempty_buffer' t (fun r ->
+        match r with
         | `Eof ->
           k
             (Ok
@@ -681,9 +686,9 @@ module Internal = struct
                 else `Eof_without_delim (Bigsubstring.concat_string (List.rev ac))))
         | `Ok ->
           let concat_helper ss lst =
-            Bigsubstring.concat_string (List.rev_append lst [ ss ])
+            trace.trace "read_until_concat_helper" (fun () -> Bigsubstring.concat_string (List.rev_append lst [ ss ]))
           in
-          (match first_char t p with
+          (match trace.trace "read_until_first_char" (fun () ->  first_char t p) with
            | Error _ as e -> k e
            | Ok None ->
              let len = t.available in
@@ -705,11 +710,11 @@ module Internal = struct
              let res = concat_helper ss ac in
              k (Ok (`Ok res))))
     in
-    loop [] 0
+    trace.trace "read_until_gen_loop" (fun () -> loop [] 0)
   ;;
 
-  let read_until t pred ~keep_delim k =
-    read_until_gen t pred ~keep_delim ~max:None (function
+  let read_until ?trace t pred ~keep_delim k =
+    read_until_gen ?trace t pred ~keep_delim ~max:None (function
       | Error _ as x -> k x
       | Ok (`Max_exceeded _) -> assert false (* impossible - no maximum set *)
       | Ok (`Eof | `Eof_without_delim _ | `Ok _) as x -> k x)
@@ -717,8 +722,8 @@ module Internal = struct
 
   let line_delimiter_pred = `Char '\n'
 
-  let read_line_gen t k =
-    read_until t line_delimiter_pred ~keep_delim:false (function
+  let read_line_gen ?trace t k =
+    read_until ?trace t line_delimiter_pred ~keep_delim:false (function
       | Error _ ->
         (* Impossible, since we supplied a [`Char] predicate. *)
         assert false
@@ -732,9 +737,9 @@ module Internal = struct
               else line)))
   ;;
 
-  let read_line t =
+  let read_line ?trace t =
     Deferred.create (fun result ->
-      read_line_gen t (fun z ->
+      read_line_gen ?trace t (fun z ->
         Ivar.fill
           result
           (match z with
@@ -962,7 +967,7 @@ module Internal = struct
     pipe_r
   ;;
 
-  let lines t = read_all t read_line
+  let lines ?trace t = read_all t (read_line ?trace)
 
   let contents t =
     let buf = Buffer.create 1024 in
@@ -1107,7 +1112,7 @@ let read_one_iobuf_at_a_time t ~handle_chunk =
 let really_read t ?pos ?len s = do_read t (fun () -> really_read t ?pos ?len s)
 let really_read_substring t s = do_read t (fun () -> really_read_substring t s)
 let really_read_bigsubstring t s = do_read t (fun () -> really_read_bigsubstring t s)
-let read_line t = do_read t (fun () -> read_line t)
+let read_line ?trace t = do_read t (fun () -> read_line ?trace t)
 let really_read_line ~wait_time t = do_read t (fun () -> really_read_line ~wait_time t)
 
 (* [do_read_k] takes a [read_k] function that takes a continuation expecting an
@@ -1127,7 +1132,7 @@ let do_read_k
       Ivar.fill result (make_result (ok_exn r))))
 ;;
 
-let read_until t p ~keep_delim = do_read_k t (read_until t p ~keep_delim) Fn.id
+let read_until ?trace t p ~keep_delim = do_read_k t (read_until ?trace t p ~keep_delim) Fn.id
 
 let read_until_max t p ~keep_delim ~max =
   do_read_k t (read_until_gen t p ~keep_delim ~max:(Some max)) Fn.id
@@ -1169,9 +1174,9 @@ let recv t = do_read t (fun () -> recv t)
    [t]. *)
 let read_all t read_one = read_all t read_one
 
-let lines t =
+let lines ?trace t =
   use t;
-  lines t
+  lines ?trace t
 ;;
 
 let contents t = do_read t (fun () -> contents t)
